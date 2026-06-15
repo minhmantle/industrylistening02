@@ -1,110 +1,102 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import requests
+import feedparser
 from datetime import datetime, timedelta
-import nest_asyncio
-from Scweet import Scweet
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-nest_asyncio.apply()
+st.set_page_config(page_title="Crypto Narrative Dashboard", layout="wide")
+st.title("🚀 Crypto Narrative & Alpha Dashboard (X-style)")
+st.markdown("**Multi RSS + Strong Semantic Detection**")
 
-st.set_page_config(page_title="Crypto X Narrative Dashboard", layout="wide")
-st.title("🚀 Crypto Narrative Dashboard (X/Twitter Only)")
-st.markdown("**Fetch trực tiếp từ X • Real-time**")
-
-# Sidebar
 st.sidebar.header("Filters")
-days = st.sidebar.slider("Time Range (ngày)", 1, 14, 7)
-focus_level = st.sidebar.slider("Focus Level", 1, 10, 3)
+days = st.sidebar.slider("Time Range (ngày)", 1, 30, 7)
+focus = st.sidebar.slider("Focus Level", 1, 5, 2)
 
-# Scweet client
+# Narrative seeds mạnh
+NARRATIVE_SEEDS = {
+    "RWA & Tokenization": "rwa tokenized real world asset ondo blackrock",
+    "AI Agents": "ai agent defai autonomous bai crypto ai",
+    "DePIN": "depin depai render io.net physical infrastructure",
+    "L2 & Infrastructure": "mantle layer2 l2 modular scaling",
+    "Stablecoins": "stablecoin usdc usdt circle tether",
+    "Prediction Markets": "polymarket prediction market",
+    "Privacy & ZK": "zk zero knowledge privacy",
+    "Perps & Derivatives": "perp perpetual hyperliquid",
+    "Meme Coins": "meme pump.fun launchpad",
+    "Others": ""
+}
+
 @st.cache_resource
-def get_scweet():
-    return Scweet(auth_token="92942b0919675b65189a4182d3173ddb7a288b6e")   # <--- THAY Ở ĐÂY
+def get_embedder():
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
-scweet = get_scweet()
+embedder = get_embedder()
+narr_emb = {k: embedder.encode(v) for k, v in NARRATIVE_SEEDS.items()}
 
-# Fetch data từ X
-@st.cache_data(ttl=120)
-def fetch_from_x(days_back=7, limit=150):
-    try:
-        since = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        query = "(crypto OR bitcoin OR eth OR mantle OR rwa OR defi OR depin OR ai OR stablecoin OR zk OR perp) lang:en"
-        
-        tweets = scweet.search(
-            search_query=query,
-            since=since,
-            until=datetime.now().strftime("%Y-%m-%d"),
-            limit=limit,
-            display_type="Latest"
-        )
-        
-        data = []
-        for t in tweets:
-            data.append({
-                'text': t.get('text', ''),
-                'username': t.get('username', ''),
-                'posted_at': pd.to_datetime(t.get('timestamp')),
-                'likes': t.get('likes', 0),
-                'retweets': t.get('retweets', 0),
-                'url': t.get('url', '')
-            })
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Lỗi Scweet: {str(e)[:150]}\n\nKiểm tra auth_token")
-        return pd.DataFrame()
+def get_narrative(text):
+    if len(text) < 30:
+        return "Others"
+    emb = embedder.encode(text)
+    best = max(narr_emb, key=lambda x: np.dot(emb, narr_emb[x]))
+    return best
 
-df = fetch_from_x(days)
+# Fetch data từ nhiều nguồn mạnh
+@st.cache_data(ttl=60)
+def fetch_data():
+    articles = []
+    feeds = [
+        "https://cointelegraph.com/rss",
+        "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "https://decrypt.co/feed",
+        "https://www.theblock.co/rss.xml",
+        "https://bitcoinmagazine.com/feed"
+    ]
+    for url in feeds:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries:
+                articles.append({
+                    'title': entry.get('title', ''),
+                    'summary': entry.get('summary') or entry.get('description', ''),
+                    'url': entry.get('link'),
+                    'posted_at': pd.to_datetime(entry.get('published'), errors='coerce')
+                })
+        except:
+            continue
+    return pd.DataFrame(articles)
 
-# Filter & Narrative
+df = fetch_data()
+
 if not df.empty:
     cutoff = datetime.now() - timedelta(days=days)
-    df = df[pd.to_datetime(df['posted_at']) >= cutoff].copy()
+    df = df[df['posted_at'] >= cutoff].copy()
+    df['combined'] = (df['title'] + " " + df['summary']).fillna('')
     
-    df['combined'] = df['text'].fillna('')
-    df = df[df['combined'].str.contains('crypto|bitcoin|eth|mantle|rwa|defi|ai|stable|zk|depin|perp', case=False)]
+    # Filter crypto
+    df = df[df['combined'].str.contains('crypto|bitcoin|eth|mantle|rwa|defi|ai|stable|zk|depin|perp|token', case=False, na=False)]
 
-if not df.empty and st.button("🔄 Phân tích Narratives từ X"):
-    with st.spinner("Đang phân tích narratives..."):
-        embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        seeds = {
-            "RWA": "rwa tokenized real world asset",
-            "AI Agents": "ai agent defai autonomous",
-            "DePIN": "depin decentralized physical",
-            "L2 & Infra": "mantle layer2 scaling",
-            "Stablecoins": "stablecoin usdc usdt",
-            "Prediction Markets": "polymarket prediction",
-            "Privacy ZK": "zk zero knowledge",
-            "Perps": "perp perpetual",
-            "Meme": "meme pump.fun"
-        }
-        
-        narrative_emb = {k: embedder.encode(v) for k, v in seeds.items()}
-        
-        def classify(text):
-            emb = embedder.encode(text)
-            best = max(narrative_emb.keys(), key=lambda k: np.dot(emb, narrative_emb[k]))
-            return best
-        
-        df['narrative'] = df['combined'].apply(classify)
-        
-        summary = df['narrative'].value_counts().reset_index()
-        summary.columns = ['narrative', 'count']
-        summary['percentage'] = (summary['count'] / len(df) * 100).round(1)
-        
-        st.subheader("🔥 Top Narratives từ X")
-        fig = px.pie(summary, names='narrative', values='count')
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(summary)
+    df['narrative'] = df['combined'].apply(get_narrative)
 
-st.subheader("🐦 Recent Tweets")
+if not df.empty and st.button("🔄 Phân tích Narratives"):
+    summary = df['narrative'].value_counts().reset_index()
+    summary.columns = ['narrative', 'count']
+    summary['percentage'] = (summary['count'] / len(df) * 100).round(1)
+    
+    st.subheader("🔥 Top Narratives")
+    fig = px.pie(summary, names='narrative', values='count')
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(summary.sort_values('count', ascending=False))
+
+st.subheader("📌 Recent Content")
 if not df.empty:
-    for _, row in df.sort_values('posted_at', ascending=False).head(12).iterrows():
-        with st.expander(f"@{row['username']}"):
-            st.write(row['text'])
-            st.markdown(f"[Xem tweet]({row['url']})")
+    for _, row in df.sort_values('posted_at', ascending=False).head(15).iterrows():
+        with st.expander(row['title'][:100]):
+            st.write(row['summary'][:400])
+            st.markdown(f"[Link]({row['url']})")
 else:
-    st.info("Chưa có data hoặc Focus Level cao quá. Thử giảm xuống 2.")
+    st.error("Vẫn chưa có data. Thử giảm Focus Level xuống 1")
 
 st.caption("Built for Minh Anh - Mantle Squad 🔥")
