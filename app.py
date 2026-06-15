@@ -18,19 +18,19 @@ st.sidebar.header("Filters")
 days = st.sidebar.slider("Time Range (ngày)", 1, 14, 7)
 focus_level = st.sidebar.slider("Focus Level", 1, 10, 3)
 
-# Thay auth_token của mày vào đây
+# Scweet client
 @st.cache_resource
 def get_scweet():
-    return Scweet(auth_token="92942b0919675b65189a4182d3173ddb7a288b6e")  # <--- Thay cái này
+    return Scweet(auth_token="92942b0919675b65189a4182d3173ddb7a288b6e")   # <--- THAY Ở ĐÂY
 
 scweet = get_scweet()
 
-# Fetch từ X
+# Fetch data từ X
 @st.cache_data(ttl=120)
-def fetch_from_x(days_back=7, limit=200):
+def fetch_from_x(days_back=7, limit=150):
     try:
         since = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        query = "crypto OR bitcoin OR eth OR mantle OR rwa OR defi OR depin OR ai agent OR stablecoin OR zk OR perp"
+        query = "(crypto OR bitcoin OR eth OR mantle OR rwa OR defi OR depin OR ai OR stablecoin OR zk OR perp) lang:en"
         
         tweets = scweet.search(
             search_query=query,
@@ -42,9 +42,8 @@ def fetch_from_x(days_back=7, limit=200):
         
         data = []
         for t in tweets:
-            text = t.get('text', '')
             data.append({
-                'text': text,
+                'text': t.get('text', ''),
                 'username': t.get('username', ''),
                 'posted_at': pd.to_datetime(t.get('timestamp')),
                 'likes': t.get('likes', 0),
@@ -53,12 +52,12 @@ def fetch_from_x(days_back=7, limit=200):
             })
         return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"Lỗi fetch X: {e}")
+        st.error(f"Lỗi Scweet: {str(e)[:150]}\n\nKiểm tra auth_token")
         return pd.DataFrame()
 
 df = fetch_from_x(days)
 
-# Filter + Narrative
+# Filter & Narrative
 if not df.empty:
     cutoff = datetime.now() - timedelta(days=days)
     df = df[pd.to_datetime(df['posted_at']) >= cutoff].copy()
@@ -66,29 +65,26 @@ if not df.empty:
     df['combined'] = df['text'].fillna('')
     df = df[df['combined'].str.contains('crypto|bitcoin|eth|mantle|rwa|defi|ai|stable|zk|depin|perp', case=False)]
 
-# Phân loại narrative (semantic)
 if not df.empty and st.button("🔄 Phân tích Narratives từ X"):
-    with st.spinner("Đang quét X và phân loại..."):
+    with st.spinner("Đang phân tích narratives..."):
         embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        # Narrative seeds
         seeds = {
-            "RWA": "rwa real world asset tokenized",
+            "RWA": "rwa tokenized real world asset",
             "AI Agents": "ai agent defai autonomous",
             "DePIN": "depin decentralized physical",
-            "Infrastructure": "mantle l2 layer2 scaling",
+            "L2 & Infra": "mantle layer2 scaling",
             "Stablecoins": "stablecoin usdc usdt",
             "Prediction Markets": "polymarket prediction",
             "Privacy ZK": "zk zero knowledge",
-            "Perps": "perp perpetual derivatives",
+            "Perps": "perp perpetual",
             "Meme": "meme pump.fun"
         }
         
         narrative_emb = {k: embedder.encode(v) for k, v in seeds.items()}
         
         def classify(text):
-            if len(text) < 30: return "Others"
             emb = embedder.encode(text)
-            best = max(narrative_emb, key=lambda k: np.dot(emb, narrative_emb[k]))
+            best = max(narrative_emb.keys(), key=lambda k: np.dot(emb, narrative_emb[k]))
             return best
         
         df['narrative'] = df['combined'].apply(classify)
@@ -102,14 +98,13 @@ if not df.empty and st.button("🔄 Phân tích Narratives từ X"):
         st.plotly_chart(fig, use_container_width=True)
         st.dataframe(summary)
 
-# Hiển thị tweets
-st.subheader("🐦 Recent Posts trên X")
+st.subheader("🐦 Recent Tweets")
 if not df.empty:
-    for _, row in df.sort_values('posted_at', ascending=False).head(15).iterrows():
-        with st.expander(f"@{row['username']} • {row['posted_at'].date()}"):
+    for _, row in df.sort_values('posted_at', ascending=False).head(12).iterrows():
+        with st.expander(f"@{row['username']}"):
             st.write(row['text'])
-            st.markdown(f"[Xem trên X]({row['url']})")
+            st.markdown(f"[Xem tweet]({row['url']})")
 else:
-    st.warning("Chưa có data. Kiểm tra auth_token và Focus Level.")
+    st.info("Chưa có data hoặc Focus Level cao quá. Thử giảm xuống 2.")
 
-st.caption("Built for Minh Anh | Fetch trực tiếp từ X 🔥")
+st.caption("Built for Minh Anh - Mantle Squad 🔥")
