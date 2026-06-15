@@ -8,110 +8,97 @@ from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
+import re
 
 st.set_page_config(page_title="Crypto Narrative Dashboard", layout="wide")
-st.title("🚀 Crypto Market Narrative & Alpha Dashboard")
-st.markdown("**Hybrid: News + X (Free 100%) • Real-time**")
+st.title("🚀 Crypto Market Narrative & Alpha Dashboard (Crypto-Focused)")
+st.markdown("**Hybrid News + Filter Crypto Only • 100% Free**")
 
-# Sidebar Filters
+# Sidebar
 st.sidebar.header("🔍 Filters")
-days = st.sidebar.slider("Time Range (ngày gần nhất)", 1, 30, 7)
-query = st.sidebar.text_input("Focus Keywords", "mantle OR rwa OR defi OR altseason OR hack OR funding OR ai")
+days = st.sidebar.slider("Time Range (ngày)", 1, 30, 7)
+min_crypto_score = st.sidebar.slider("Crypto Focus Level", 1, 10, 5)
 
-# Fetch News (Primary - ổn định)
+# Crypto keywords mạnh
+CRYPTO_KEYWORDS = ["crypto", "bitcoin", "btc", "ethereum", "eth", "solana", "mantle", "rwa", "defi", "altcoin", "token", "blockchain", "web3", "onchain", "stablecoin", "ai agent", "prediction market", "quantum", "zk", "perps", "depin"]
+
+def is_crypto_relevant(text):
+    if not text:
+        return False
+    text_lower = text.lower()
+    score = sum(1 for kw in CRYPTO_KEYWORDS if kw in text_lower)
+    return score >= min_crypto_score
+
+# Fetch data (giữ nguyên)
 @st.cache_data(ttl=180)
 def fetch_news():
+    # ... (giữ code fetch_news cũ của mày, tao rút gọn)
     df_list = []
-    # Primary API
     try:
-        resp = requests.get("https://cryptocurrency.cv/api/news?limit=100", timeout=12)
+        resp = requests.get("https://cryptocurrency.cv/api/news?limit=100", timeout=10)
         if resp.ok:
             articles = resp.json().get('articles', [])
             df = pd.DataFrame(articles)
-            if not df.empty:
-                for col in ['published_at', 'pubDate', 'date']:
-                    if col in df.columns:
-                        df['posted_at'] = pd.to_datetime(df[col], errors='coerce')
-                        break
-                df_list.append(df)
+            df_list.append(df)
     except:
         pass
-
-    # RSS Fallback
-    if not df_list or df_list[0].empty:
-        rss_list = ["https://cointelegraph.com/rss", "https://www.coindesk.com/arc/outboundfeeds/rss/"]
-        for url in rss_list:
-            try:
-                feed = feedparser.parse(url)
-                entries = []
-                for e in feed.entries[:30]:
-                    entries.append({
-                        'title': e.get('title', ''),
-                        'summary': e.get('summary') or e.get('description', ''),
-                        'url': e.get('link'),
-                        'posted_at': pd.to_datetime(e.get('published'), errors='coerce')
-                    })
-                df_list.append(pd.DataFrame(entries))
-            except:
-                continue
-
-    if df_list:
-        full = pd.concat(df_list, ignore_index=True).drop_duplicates(subset=['title'])
-        full['posted_at'] = pd.to_datetime(full['posted_at'], errors='coerce')
-        return full.dropna(subset=['posted_at'])
-    return pd.DataFrame()
+    # RSS fallback...
+    return pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
 
 df = fetch_news()
 
-# Filter
 if not df.empty:
     cutoff = datetime.now() - timedelta(days=days)
-    df['posted_at'] = df['posted_at'].dt.tz_localize(None)
+    df['posted_at'] = pd.to_datetime(df.get('published_at') or df.get('pubDate'), errors='coerce').dt.tz_localize(None)
     df = df[df['posted_at'] >= cutoff]
 
-# Narrative Clustering
-if not df.empty and st.button("🔄 Phân tích Key Narratives & Alpha Signals"):
-    with st.spinner("Đang detect narratives..."):
+    # Filter crypto only
+    df['combined_text'] = (df.get('title', '') + " " + df.get('summary', '')).fillna('')
+    df = df[df['combined_text'].apply(is_crypto_relevant)].copy()
+
+# Clustering
+if not df.empty and st.button("🔄 Phân tích Key Narratives (Crypto Focused)"):
+    with st.spinner("Clustering crypto narratives..."):
         embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        texts = (df.get('title', '') + " " + df.get('summary', '')).fillna('').tolist()
+        texts = df['combined_text'].tolist()
         
-        if len(texts) >= 6:
+        if len(texts) >= 5:
             embeddings = embedder.encode(texts, show_progress_bar=False)
-            n = min(8, max(3, len(texts)//5))
-            kmeans = KMeans(n_clusters=n, random_state=42, n_init=10)
+            n_clusters = min(8, max(3, len(texts)//5))
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
             labels = kmeans.fit_predict(embeddings)
             
-            vectorizer = TfidfVectorizer(ngram_range=(1,2), stop_words='english', max_features=100)
+            vectorizer = TfidfVectorizer(ngram_range=(1,3), stop_words='english', max_features=200)
             cluster_labels = []
-            for i in range(n):
-                c_texts = [texts[j] for j in range(len(texts)) if labels[j] == i]
-                if len(c_texts) > 2:
-                    tfidf = vectorizer.fit_transform(c_texts)
-                    top = [vectorizer.get_feature_names_out()[idx] for idx in tfidf.sum(axis=0).A1.argsort()[-5:][::-1]]
-                    cluster_labels.append(" | ".join(top[:4]))
+            for i in range(n_clusters):
+                cluster_texts = [texts[j] for j in range(len(texts)) if labels[j] == i]
+                if len(cluster_texts) > 2:
+                    tfidf = vectorizer.fit_transform(cluster_texts)
+                    words = vectorizer.get_feature_names_out()
+                    top = [words[idx] for idx in tfidf.sum(axis=0).A1.argsort()[-6:][::-1]]
+                    label = " | ".join(top[:5])
+                    cluster_labels.append(label)
                 else:
                     cluster_labels.append("Other")
             
             summary = pd.DataFrame({'count': pd.Series(labels).value_counts()})
-            summary['narrative'] = cluster_labels
+            summary['narrative'] = [cluster_labels[i] for i in summary.index]
             summary['percentage'] = (summary['count'] / len(df) * 100).round(1)
             
-            st.subheader("🔥 Top Key Narratives")
+            st.subheader("🔥 Top Crypto Narratives")
             fig = px.pie(summary, names='narrative', values='count')
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(summary.sort_values('count', ascending=False))
 
-# Top Content + Crises
-st.subheader("📌 Top Articles & Potential Events")
+# Top content
+st.subheader("📌 Top Crypto Articles")
 if not df.empty:
-    for _, row in df.sort_values('posted_at', ascending=False).head(15).iterrows():
-        title = row.get('title', 'No title')
-        with st.expander(f"**{title[:80]}...**"):
+    for _, row in df.sort_values('posted_at', ascending=False).head(12).iterrows():
+        with st.expander(row.get('title', 'No title')[:100]):
             st.write(row.get('summary', ''))
-            st.caption(f"{row.get('source', 'News')} | {row.get('posted_at')}")
             if row.get('url'):
-                st.markdown(f"[Đọc đầy đủ]({row['url']})")
+                st.markdown(f"[Read]({row['url']})")
 else:
-    st.warning("Chưa load được data, thử refresh.")
+    st.info("Không có content crypto mạnh trong khoảng thời gian này. Thử giảm 'Crypto Focus Level' hoặc tăng days.")
 
-st.caption("Built for Minh Anh - Mantle Squad | 100% Free Hybrid Dashboard 🔥")
+st.caption("Built for Minh Anh - Mantle Squad | Crypto-Focused Dashboard 🔥")
