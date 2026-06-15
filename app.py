@@ -21,7 +21,7 @@ focus_level = st.sidebar.slider("Focus Level", 1, 10, 3)
 # Thay auth_token của mày vào đây
 @st.cache_resource
 def get_scweet():
-    return Scweet(auth_token="YOUR_AUTH_TOKEN_HERE")  # <--- Thay cái này
+    return Scweet(auth_token="92942b0919675b65189a4182d3173ddb7a288b6e")  # <--- Thay cái này
 
 scweet = get_scweet()
 
