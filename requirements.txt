@@ -4,7 +4,4 @@ plotly
 requests
 feedparser
 sentence-transformers
-scikit-learn
 numpy
-Scweet
-nest-asyncio
