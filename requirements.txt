@@ -1,0 +1,8 @@
+streamlit
+pandas
+plotly
+requests
+sentence-transformers
+scikit-learn
+numpy
+feedparser
